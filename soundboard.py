@@ -7,7 +7,7 @@ Benodigde installaties:
 Start de applicatie met:
     python soundboard.py
 
-De app toont een gebruiksvriendelijke relatieve schaal van 0 tot 90 dB: 0 is
+De app toont een gebruiksvriendelijke relatieve schaal van 0 tot 1000 dB: 0 is
 stilte en hogere waarden betekenen een harder microfoonsignaal. Voor fysieke,
 gekalibreerde dB SPL is een externe kalibratie van de microfoon nodig.
 """
@@ -18,10 +18,13 @@ import re
 import sys
 import threading
 import time
+from datetime import date, datetime, time as clock_time, timedelta
 from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Font, PatternFill
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
@@ -45,7 +48,10 @@ from PyQt6.QtWidgets import (
 
 APP_DIR = Path(__file__).resolve().parent
 HIGHSCORES_FILE = APP_DIR / "highscores.json"
+EXPORT_DIR = APP_DIR / "daily_exports"
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+NOISE_FLOOR_DBFS = -90.0
+DISPLAY_MAX_DB = 1000.0
 
 
 class AudioLevelReader:
@@ -53,7 +59,7 @@ class AudioLevelReader:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._dbfs = -90.0
+        self._dbfs = NOISE_FLOOR_DBFS
         self._stream: sd.InputStream | None = None
 
     def _audio_callback(self, indata, frames, time_info, status) -> None:
@@ -64,7 +70,7 @@ class AudioLevelReader:
         rms = float(np.sqrt(np.mean(np.square(indata, dtype=np.float64))))
         dbfs = 20 * math.log10(max(rms, 1e-9))
         with self._lock:
-            self._dbfs = max(-90.0, min(0.0, dbfs))
+            self._dbfs = max(NOISE_FLOOR_DBFS, min(0.0, dbfs))
 
     def start(self) -> None:
         """Open de standaardmicrofoon. sounddevice kiest het OS-apparaat."""
@@ -84,10 +90,11 @@ class AudioLevelReader:
             self._stream = None
 
     def level(self) -> float:
-        """Geeft een positieve, relatieve geluidswaarde van 0 tot 90 terug."""
+        """Geeft een positieve, relatieve geluidswaarde van 0 tot 1000 terug."""
         with self._lock:
-            # Zet de interne -90..0 dBFS-waarde om naar een heldere 0..90-schaal.
-            return self._dbfs + 90.0
+            # Rek de interne -90..0 dBFS-waarde uit voor een 0..1000-scorebord.
+            normalized = (self._dbfs - NOISE_FLOOR_DBFS) / abs(NOISE_FLOOR_DBFS)
+            return normalized * DISPLAY_MAX_DB
 
 
 class LevelMeter(QWidget):
@@ -100,8 +107,8 @@ class LevelMeter(QWidget):
         self._shown = 0.0
 
     def set_level(self, decibels: float) -> None:
-        """Converteert de 0..90-schaal naar 0..1 en werkt zacht naar die positie."""
-        self._target = max(0.0, min(1.0, decibels / 90.0))
+        """Converteert de 0..1000-schaal naar 0..1 en werkt zacht naar die positie."""
+        self._target = max(0.0, min(1.0, decibels / DISPLAY_MAX_DB))
         self._shown += (self._target - self._shown) * 0.28
         self.update()
 
@@ -132,11 +139,15 @@ class SoundboardWindow(QMainWindow):
         self.measurement_timer = QTimer(self)
         self.measurement_timer.setInterval(40)
         self.measurement_timer.timeout.connect(self.update_measurement)
+        self.daily_export_timer = QTimer(self)
+        self.daily_export_timer.setSingleShot(True)
+        self.daily_export_timer.timeout.connect(self.export_at_end_of_day)
         self.started_at = 0.0
         self.max_db = 0.0
         self.is_measuring = False
         self._build_ui()
         self.load_highscores()
+        self.schedule_daily_export()
 
     def _build_ui(self) -> None:
         """Bouw de donkere Monster-stijl interface op."""
@@ -199,6 +210,10 @@ class SoundboardWindow(QMainWindow):
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet("color: #bdbdbd; font-size: 14px;")
         left.addWidget(self.status_label)
+        export_note = QLabel("Dagelijkse Top 10-export: daily_exports")
+        export_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        export_note.setStyleSheet("color: #777; font-size: 11px;")
+        left.addWidget(export_note)
         self.meter = LevelMeter()
         left.addWidget(self.meter)
         self.start_button = QPushButton("START SCHREEUW TEST")
@@ -312,9 +327,64 @@ class SoundboardWindow(QMainWindow):
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter if column != 1 else Qt.AlignmentFlag.AlignVCenter)
                 self.ranking_table.setItem(row, column, item)
 
+    def schedule_daily_export(self) -> None:
+        """Plant één export voor de eerstvolgende lokale middernacht."""
+        now = datetime.now()
+        next_midnight = datetime.combine(now.date() + timedelta(days=1), clock_time.min)
+        milliseconds = max(1, int((next_midnight - now).total_seconds() * 1000))
+        self.daily_export_timer.start(milliseconds)
+
+    def export_at_end_of_day(self) -> None:
+        """Exporteert de eindstand van de vorige dag en plant de volgende export."""
+        export_date = date.today() - timedelta(days=1)
+        try:
+            self.export_top_ten_to_excel(export_date)
+            self.status_label.setText(f"Dagelijkse Top 10 geëxporteerd: {export_date.isoformat()}")
+        except OSError as error:
+            self.status_label.setText(f"Dagelijkse export mislukt: {error}")
+        finally:
+            self.schedule_daily_export()
+
+    def export_top_ten_to_excel(self, export_date: date) -> Path:
+        """Slaat de actuele Top 10 privacyvriendelijk op als lokaal Excel-bestand."""
+        scores = self.read_scores()
+        scores.sort(key=lambda entry: entry.get("max_db", 0), reverse=True)
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Top 10"
+        sheet.append(["MONSTER ENERGY SOUNDBOARD"])
+        sheet.merge_cells("A1:C1")
+        sheet["A1"].font = Font(bold=True, size=16, color="3CD070")
+        sheet["A1"].fill = PatternFill("solid", fgColor="111111")
+        sheet["A1"].alignment = Alignment(horizontal="center")
+        sheet.append([f"Dagelijkse Top 10 — {export_date.isoformat()}"])
+        sheet.merge_cells("A2:C2")
+        sheet["A2"].alignment = Alignment(horizontal="center")
+        sheet.append([])
+        sheet.append(["Rank", "Naam", "Max Score (dB)"])
+        for cell in sheet[4]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="267A45")
+            cell.alignment = Alignment(horizontal="center")
+        for rank, score in enumerate(scores[:10], start=1):
+            full_name = str(score.get("name", "Onbekend")).strip()
+            first_name = full_name.split()[0] if full_name else "Onbekend"
+            sheet.append([rank, first_name, round(float(score.get("max_db", 0)), 1)])
+        sheet.column_dimensions["A"].width = 12
+        sheet.column_dimensions["B"].width = 24
+        sheet.column_dimensions["C"].width = 20
+        for row in sheet.iter_rows(min_row=5, max_col=3):
+            for cell in row:
+                cell.alignment = Alignment(horizontal="center")
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        output_file = EXPORT_DIR / f"top_10_{export_date.isoformat()}.xlsx"
+        workbook.save(output_file)
+        return output_file
+
     def closeEvent(self, event) -> None:
         """Voorkomt dat een actieve microfoonstream achterblijft bij afsluiten."""
         self.measurement_timer.stop()
+        self.daily_export_timer.stop()
         self.audio.stop()
         event.accept()
 
