@@ -22,8 +22,6 @@ from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
@@ -341,13 +339,18 @@ class SoundboardWindow(QMainWindow):
         try:
             self.export_top_ten_to_excel(export_date)
             self.status_label.setText(f"Dagelijkse Top 10 geëxporteerd: {export_date.isoformat()}")
-        except OSError as error:
+        except (OSError, RuntimeError) as error:
             self.status_label.setText(f"Dagelijkse export mislukt: {error}")
         finally:
             self.schedule_daily_export()
 
     def export_top_ten_to_excel(self, export_date: date) -> Path:
         """Slaat de actuele Top 10 privacyvriendelijk op als lokaal Excel-bestand."""
+        try:
+            from openpyxl import Workbook
+            from openpyxl.styles import Alignment, Font, PatternFill
+        except ModuleNotFoundError as error:
+            raise RuntimeError("Installeer openpyxl met: py -m pip install openpyxl") from error
         scores = self.read_scores()
         scores.sort(key=lambda entry: entry.get("max_db", 0), reverse=True)
         workbook = Workbook()
