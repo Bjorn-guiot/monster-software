@@ -1,15 +1,3 @@
-"""
-MONSTER ENERGY SOUNDBOARD
-
-Benodigde installaties:
-    python -m pip install PyQt6 sounddevice numpy
-
-Start de applicatie met:
-    python soundboard.py
-
-De app toont een dB SPL-schaal van 0 tot 150 dB. Voor correcte, fysieke waarden
-moet de CALIBRATION_OFFSET_DB afgestemd worden op de gebruikte meetmicrofoon.
-"""
 
 import json
 import math
@@ -49,8 +37,6 @@ EXPORT_DIR = APP_DIR / "daily_exports"
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 NOISE_FLOOR_DBFS = -90.0
 DISPLAY_MAX_DB = 150.0
-# Kalibreer met een bekende geluidsbron: offset = bekende dB SPL - gemeten dBFS.
-# Voorbeeld: een 94 dB-kalibrator meet -20 dBFS, dus de offset wordt 114.0.
 CALIBRATION_OFFSET_DB = 114.0
 
 
@@ -63,9 +49,7 @@ class AudioLevelReader:
         self._stream: sd.InputStream | None = None
 
     def _audio_callback(self, indata, frames, time_info, status) -> None:
-        """Bereken RMS en zet dit om naar een veilige, begrensde dBFS-waarde."""
         if status:
-            # Een tijdelijke overflow mag de meting niet onderbreken.
             pass
         rms = float(np.sqrt(np.mean(np.square(indata, dtype=np.float64))))
         dbfs = 20 * math.log10(max(rms, 1e-9))
@@ -73,7 +57,6 @@ class AudioLevelReader:
             self._dbfs = max(NOISE_FLOOR_DBFS, min(0.0, dbfs))
 
     def start(self) -> None:
-        """Open de standaardmicrofoon. sounddevice kiest het OS-apparaat."""
         self._stream = sd.InputStream(
             channels=1,
             samplerate=None,
@@ -83,21 +66,18 @@ class AudioLevelReader:
         self._stream.start()
 
     def stop(self) -> None:
-        """Sluit de microfoonstream veilig af."""
         if self._stream is not None:
             self._stream.stop()
             self._stream.close()
             self._stream = None
 
     def level(self) -> float:
-        """Geeft de gekalibreerde, begrensde dB SPL-waarde van 0 tot 150 terug."""
         with self._lock:
             # dB SPL = digitale dBFS-waarde + de microfoon-/interfacekalibratie.
             return max(0.0, min(DISPLAY_MAX_DB, self._dbfs + CALIBRATION_OFFSET_DB))
 
 
 class LevelMeter(QWidget):
-    """Custom, vloeiend getekende horizontale geluidmeter."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -106,7 +86,6 @@ class LevelMeter(QWidget):
         self._shown = 0.0
 
     def set_level(self, decibels: float) -> None:
-        """Converteert de 0..150-schaal naar 0..1 en werkt zacht naar die positie."""
         self._target = max(0.0, min(1.0, decibels / DISPLAY_MAX_DB))
         self._shown += (self._target - self._shown) * 0.28
         self.update()
@@ -127,11 +106,10 @@ class LevelMeter(QWidget):
 
 
 class SoundboardWindow(QMainWindow):
-    """Hoofdvenster voor registratie, vijfseconden-test en Top 10."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Monster Energy Soundboard")
+        self.setWindowTitle("Monster Energy Scream Challenge")
         self.setMinimumSize(1000, 620)
         self.resize(1180, 720)
         self.audio = AudioLevelReader()
@@ -149,7 +127,6 @@ class SoundboardWindow(QMainWindow):
         self.schedule_daily_export()
 
     def _build_ui(self) -> None:
-        """Bouw de donkere Monster-stijl interface op."""
         self.setStyleSheet("""
             QMainWindow, QWidget { background: #111111; color: #f0f0f0; }
             QLineEdit { background: #1e1e1e; border: 1px solid #444; border-radius: 5px;
@@ -170,7 +147,7 @@ class SoundboardWindow(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 28)
         layout.setSpacing(20)
 
-        header = QLabel("MONSTER ENERGY SOUNDBOARD")
+        header = QLabel("MONSTER ENERGY SCREAM CHALLENGE")
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header.setMinimumHeight(78)
         header.setFont(QFont("Arial", 26, QFont.Weight.Black))
@@ -241,14 +218,12 @@ class SoundboardWindow(QMainWindow):
         content.addWidget(ranking_box, 2)
 
     def validate_form(self) -> None:
-        """Vereist voor- én achternaam plus een geldig basaal e-mailadres."""
         name_parts = self.name_input.text().strip().split()
         valid_full_name = len(name_parts) >= 2
         valid = valid_full_name and bool(EMAIL_PATTERN.match(self.email_input.text().strip()))
         self.start_button.setEnabled(valid and not self.is_measuring)
 
     def start_test(self) -> None:
-        """Start een verse vijfsecondenmeting en de onafhankelijke audiostream."""
         try:
             self.audio.start()
         except Exception as error:
@@ -264,7 +239,6 @@ class SoundboardWindow(QMainWindow):
         self.measurement_timer.start()
 
     def update_measurement(self) -> None:
-        """Ververst de meter via QTimer en sluit precies na vijf seconden af."""
         current_db = self.audio.level()
         self.max_db = max(self.max_db, current_db)
         self.db_label.setText(f"{current_db:.1f} dB")
@@ -275,7 +249,6 @@ class SoundboardWindow(QMainWindow):
             self.finish_test()
 
     def finish_test(self) -> None:
-        """Bewaart de hoogste score en herstelt de invoer voor de volgende deelnemer."""
         self.measurement_timer.stop()
         self.audio.stop()
         self.is_measuring = False
@@ -293,7 +266,6 @@ class SoundboardWindow(QMainWindow):
         self.validate_form()
 
     def read_scores(self) -> list[dict]:
-        """Leest lokale scores; een beschadigd of ontbrekend bestand geeft een lege lijst."""
         try:
             with HIGHSCORES_FILE.open("r", encoding="utf-8") as file:
                 data = json.load(file)
@@ -302,18 +274,15 @@ class SoundboardWindow(QMainWindow):
             return []
 
     def write_scores(self, scores: list[dict]) -> None:
-        """Schrijft alle scores, inclusief e-mail, naar het lokale JSON-bestand."""
         with HIGHSCORES_FILE.open("w", encoding="utf-8") as file:
             json.dump(scores, file, ensure_ascii=False, indent=2)
 
     def load_highscores(self) -> None:
-        """Vult het scorebord bij het openen van de app."""
         scores = self.read_scores()
         scores.sort(key=lambda entry: entry.get("max_db", 0), reverse=True)
         self.populate_ranking(scores)
 
     def populate_ranking(self, scores: list[dict]) -> None:
-        """Toont alleen de Top 10 en laat e-mail bewust buiten het publieke bord."""
         top_ten = scores[:10]
         self.ranking_table.setRowCount(len(top_ten))
         for row, score in enumerate(top_ten):
@@ -327,14 +296,12 @@ class SoundboardWindow(QMainWindow):
                 self.ranking_table.setItem(row, column, item)
 
     def schedule_daily_export(self) -> None:
-        """Plant één export voor de eerstvolgende lokale middernacht."""
         now = datetime.now()
         next_midnight = datetime.combine(now.date() + timedelta(days=1), clock_time.min)
         milliseconds = max(1, int((next_midnight - now).total_seconds() * 1000))
         self.daily_export_timer.start(milliseconds)
 
     def export_at_end_of_day(self) -> None:
-        """Exporteert de eindstand van de vorige dag en plant de volgende export."""
         export_date = date.today() - timedelta(days=1)
         try:
             self.export_top_ten_to_excel(export_date)
@@ -345,7 +312,6 @@ class SoundboardWindow(QMainWindow):
             self.schedule_daily_export()
 
     def export_top_ten_to_excel(self, export_date: date) -> Path:
-        """Slaat de actuele Top 10 privacyvriendelijk op als lokaal Excel-bestand."""
         try:
             from openpyxl import Workbook
             from openpyxl.styles import Alignment, Font, PatternFill
@@ -356,7 +322,7 @@ class SoundboardWindow(QMainWindow):
         workbook = Workbook()
         sheet = workbook.active
         sheet.title = "Top 10"
-        sheet.append(["MONSTER ENERGY SOUNDBOARD"])
+        sheet.append(["MONSTER ENERGY SCREAM CHALLENGE"])
         sheet.merge_cells("A1:C1")
         sheet["A1"].font = Font(bold=True, size=16, color="3CD070")
         sheet["A1"].fill = PatternFill("solid", fgColor="111111")
@@ -386,7 +352,6 @@ class SoundboardWindow(QMainWindow):
         return output_file
 
     def closeEvent(self, event) -> None:
-        """Voorkomt dat een actieve microfoonstream achterblijft bij afsluiten."""
         self.measurement_timer.stop()
         self.daily_export_timer.stop()
         self.audio.stop()
@@ -394,7 +359,6 @@ class SoundboardWindow(QMainWindow):
 
 
 def main() -> None:
-    """Startpunt van de applicatie."""
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     window = SoundboardWindow()
