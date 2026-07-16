@@ -7,9 +7,8 @@ Benodigde installaties:
 Start de applicatie met:
     python soundboard.py
 
-De app toont een gebruiksvriendelijke relatieve schaal van 0 tot 1000 dB: 0 is
-stilte en hogere waarden betekenen een harder microfoonsignaal. Voor fysieke,
-gekalibreerde dB SPL is een externe kalibratie van de microfoon nodig.
+De app toont een dB SPL-schaal van 0 tot 150 dB. Voor correcte, fysieke waarden
+moet de CALIBRATION_OFFSET_DB afgestemd worden op de gebruikte meetmicrofoon.
 """
 
 import json
@@ -51,7 +50,10 @@ HIGHSCORES_FILE = APP_DIR / "highscores.json"
 EXPORT_DIR = APP_DIR / "daily_exports"
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 NOISE_FLOOR_DBFS = -90.0
-DISPLAY_MAX_DB = 1000.0
+DISPLAY_MAX_DB = 150.0
+# Kalibreer met een bekende geluidsbron: offset = bekende dB SPL - gemeten dBFS.
+# Voorbeeld: een 94 dB-kalibrator meet -20 dBFS, dus de offset wordt 114.0.
+CALIBRATION_OFFSET_DB = 114.0
 
 
 class AudioLevelReader:
@@ -90,11 +92,10 @@ class AudioLevelReader:
             self._stream = None
 
     def level(self) -> float:
-        """Geeft een positieve, relatieve geluidswaarde van 0 tot 1000 terug."""
+        """Geeft de gekalibreerde, begrensde dB SPL-waarde van 0 tot 150 terug."""
         with self._lock:
-            # Rek de interne -90..0 dBFS-waarde uit voor een 0..1000-scorebord.
-            normalized = (self._dbfs - NOISE_FLOOR_DBFS) / abs(NOISE_FLOOR_DBFS)
-            return normalized * DISPLAY_MAX_DB
+            # dB SPL = digitale dBFS-waarde + de microfoon-/interfacekalibratie.
+            return max(0.0, min(DISPLAY_MAX_DB, self._dbfs + CALIBRATION_OFFSET_DB))
 
 
 class LevelMeter(QWidget):
@@ -107,7 +108,7 @@ class LevelMeter(QWidget):
         self._shown = 0.0
 
     def set_level(self, decibels: float) -> None:
-        """Converteert de 0..1000-schaal naar 0..1 en werkt zacht naar die positie."""
+        """Converteert de 0..150-schaal naar 0..1 en werkt zacht naar die positie."""
         self._target = max(0.0, min(1.0, decibels / DISPLAY_MAX_DB))
         self._shown += (self._target - self._shown) * 0.28
         self.update()
