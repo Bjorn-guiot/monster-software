@@ -41,7 +41,6 @@ CALIBRATION_OFFSET_DB = 114.0
 
 
 class AudioLevelReader:
-    """Leest de microfoon in een callback-thread zonder de GUI te blokkeren."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
