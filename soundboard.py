@@ -10,8 +10,8 @@ from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
-from PyQt6.QtCore import QTimer, Qt
-from PyQt6.QtGui import QColor, QFont, QPainter, QPen
+from PyQt6.QtCore import QRect, QTimer, Qt
+from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QAbstractItemView,
@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 APP_DIR = Path(__file__).resolve().parent
 HIGHSCORES_FILE = APP_DIR / "highscores.json"
 EXPORT_DIR = APP_DIR / "daily_exports"
+LOGO_FILE = APP_DIR / "logo-clean.png"
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 NOISE_FLOOR_DBFS = -90.0
 DISPLAY_MAX_DB = 132.0
@@ -89,13 +90,14 @@ class AudioLevelReader:
             return max(0.0, min(DISPLAY_MAX_DB, self._dbfs + CALIBRATION_OFFSET_DB))
 
 
-class LevelMeter(QWidget):
+class LogoMeter(QWidget):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setMinimumHeight(72)
+        self.setMinimumHeight(245)
         self._target = 0.0
         self._shown = 0.0
+        self._logo = QPixmap(str(LOGO_FILE))
 
     def set_level(self, decibels: float) -> None:
         self._target = max(0.0, min(1.0, decibels / DISPLAY_MAX_DB))
@@ -105,16 +107,27 @@ class LevelMeter(QWidget):
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self.rect().adjusted(2, 14, -2, -14)
-        painter.setBrush(QColor("#202020"))
-        painter.setPen(QPen(QColor("#424242"), 1))
-        painter.drawRoundedRect(rect, 10, 10)
-        if self._shown > 0:
-            filled = rect.adjusted(3, 3, -3, -3)
-            filled.setWidth(int(filled.width() * self._shown))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#3CD070"))
-            painter.drawRoundedRect(filled, 7, 7)
+        if self._logo.isNull():
+            painter.setPen(QColor("#3CD070"))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Logo niet gevonden")
+            return
+        available = self.rect().adjusted(12, 6, -12, -6)
+        ratio = self._logo.width() / self._logo.height()
+        height = min(available.height(), int(available.width() / ratio))
+        width = int(height * ratio)
+        x = available.x() + (available.width() - width) // 2
+        y = available.y() + (available.height() - height) // 2
+        target = QRect(x, y, width, height)
+
+        # De donkere vorm toont de volledige meter; het heldere logo groeit omhoog.
+        painter.setOpacity(0.16)
+        painter.drawPixmap(target, self._logo)
+        painter.save()
+        filled_height = int(target.height() * self._shown)
+        painter.setClipRect(target.x(), target.bottom() - filled_height + 1, target.width(), filled_height)
+        painter.setOpacity(1.0)
+        painter.drawPixmap(target, self._logo)
+        painter.restore()
 
 
 class SoundboardWindow(QMainWindow):
@@ -159,12 +172,22 @@ class SoundboardWindow(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 28)
         layout.setSpacing(20)
 
+        header_panel = QFrame()
+        header_panel.setMinimumHeight(78)
+        header_panel.setStyleSheet("QFrame { background: #181818; border: 1px solid #306b45; border-radius: 8px; }")
+        header_row = QHBoxLayout(header_panel)
+        header_row.setContentsMargins(22, 10, 22, 10)
+        header_row.setSpacing(14)
+        header_row.addStretch(1)
+        header_row.addWidget(self._make_logo_label(header_panel, 48))
         header = QLabel("MONSTER ENERGY SCREAM CHALLENGE")
         header.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header.setMinimumHeight(78)
         header.setFont(QFont("Arial", 26, QFont.Weight.Black))
-        header.setStyleSheet("background: #181818; color: #3CD070; border: 1px solid #306b45; border-radius: 8px; letter-spacing: 2px;")
-        layout.addWidget(header)
+        header.setStyleSheet("background: transparent; color: #3CD070; border: none; letter-spacing: 2px;")
+        header_row.addWidget(header)
+        header_row.addWidget(self._make_logo_label(header_panel, 48))
+        header_row.addStretch(1)
+        layout.addWidget(header_panel)
 
         content = QHBoxLayout()
         content.setSpacing(24)
@@ -202,7 +225,7 @@ class SoundboardWindow(QMainWindow):
         export_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         export_note.setStyleSheet("color: #777; font-size: 11px;")
         left.addWidget(export_note)
-        self.meter = LevelMeter()
+        self.meter = LogoMeter()
         left.addWidget(self.meter)
         self.start_button = QPushButton("START SCHREEUW TEST")
         self.start_button.setMinimumHeight(54)
@@ -228,6 +251,16 @@ class SoundboardWindow(QMainWindow):
         self.ranking_table.horizontalHeader().setStretchLastSection(True)
         ranking_layout.addWidget(self.ranking_table)
         content.addWidget(ranking_box, 2)
+
+    @staticmethod
+    def _make_logo_label(parent: QWidget, size: int) -> QLabel:
+        """Maakt een transparant, schaalbaar label voor het aangeleverde Monster-logo."""
+        logo = QLabel(parent)
+        logo.setPixmap(QPixmap(str(LOGO_FILE)))
+        logo.setFixedSize(size, size)
+        logo.setScaledContents(True)
+        logo.setStyleSheet("background: transparent; border: none;")
+        return logo
 
     def validate_form(self) -> None:
         name_parts = self.name_input.text().strip().split()

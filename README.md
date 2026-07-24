@@ -1,25 +1,15 @@
 # Monster Energy Scream Challenge
 
-## Hardware Setup: Shure MV7
+Benodigde installaties:
+    python -m pip install PyQt6 sounddevice numpy
 
-Use the microphone via USB, not XLR; XLR requires a separate audio interface and its own calibration. In the Shure MOTIV app, configure the MV7 to **Manual / minimum gain / Flat** and disable compressor, limiter, and Auto Level—otherwise they will affect the score.
+Start de applicatie met:
+    python soundboard.py
 
-## Monster Energy Soundboard Application
+De app toont een dB SPL-schaal van 0 tot 150 dB. Voor correcte, fysieke waarden
+moet de CALIBRATION_OFFSET_DB afgestemd worden op de gebruikte meetmicrofoon.
 
-### Installation
 
-Required packages:
-```
-python -m pip install PyQt6 sounddevice numpy
-```
+## Shure MV7 instellen
 
-### Running the Application
-
-Start with:
-```
-python soundboard.py
-```
-
-### Calibration
-
-The app displays a dB SPL scale from 0 to 150 dB. For accurate physical measurements, adjust the `CALIBRATION_OFFSET_DB` to match your measurement microphone.
+Gebruik de microfoon via USB, niet via XLR; XLR vereist een aparte audio-interface en eigen kalibratie. Stel in de Shure MOTIV-app de MV7 in op **Manual / minimum gain / Flat** en zet compressor, limiter en Auto Level uit, anders beïnvloeden die de score.
