@@ -213,6 +213,75 @@ class ResultOverlay(QWidget):
             painter.restore()
 
 
+class TVRankingWindow(QMainWindow):
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setWindowTitle("Monster Energy — Live Ranking")
+        self.setStyleSheet("""
+            QMainWindow, QWidget { background: #111111; color: #f5f5f5; }
+            QTableWidget { background: #181818; color: white; border: 1px solid #3CD070;
+                           font-size: 22px; gridline-color: #333; }
+            QHeaderView::section { background: #242424; color: #3CD070; font-size: 18px;
+                                   padding: 14px; border: none; font-weight: bold; }
+        """)
+        root = QWidget()
+        self.setCentralWidget(root)
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(50, 38, 50, 48)
+        title_row = QHBoxLayout()
+        title_row.addWidget(self._logo_label(68))
+        title = QLabel("MONSTER ENERGY SCREAM CHALLENGE — LIVE TOP 10")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setFont(QFont("Arial", 28, QFont.Weight.Black))
+        title.setStyleSheet("color: #3CD070;")
+        title_row.addWidget(title, 1)
+        title_row.addWidget(self._logo_label(68))
+        layout.addLayout(title_row)
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["RANK", "NAAM", "MAX SCORE (dB SPL)"])
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setColumnWidth(0, 140)
+        self.table.setColumnWidth(1, 360)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table, 1)
+
+    @staticmethod
+    def _logo_label(size: int) -> QLabel:
+        logo = QLabel()
+        logo.setPixmap(QPixmap(str(LOGO_FILE)))
+        logo.setFixedSize(size, size)
+        logo.setScaledContents(True)
+        return logo
+
+    def set_scores(self, scores: list[dict]) -> None:
+
+        top_ten = scores[:10]
+        self.table.setRowCount(len(top_ten))
+        for row, score in enumerate(top_ten):
+            full_name = str(score.get("name", "Onbekend")).strip()
+            first_name = full_name.split()[0] if full_name else "Onbekend"
+            values = [str(row + 1), first_name, f"{float(score.get('max_db', 0)):.1f}"]
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                item.setFont(QFont("Arial", 22, QFont.Weight.Bold if column != 1 else QFont.Weight.Normal))
+                self.table.setItem(row, column, item)
+            self.table.setRowHeight(row, 54)
+
+    def show_on_tv(self) -> bool:
+
+        screens = QApplication.screens()
+        if len(screens) < 2:
+            return False
+        target_screen = screens[1]
+        self.setGeometry(target_screen.geometry())
+        self.showFullScreen()
+        return True
+
+
 class SoundboardWindow(QMainWindow):
 
     def __init__(self) -> None:
@@ -230,6 +299,7 @@ class SoundboardWindow(QMainWindow):
         self.started_at = 0.0
         self.max_db = 0.0
         self.is_measuring = False
+        self.ranking_display = TVRankingWindow()
         self._build_ui()
         self.load_highscores()
         self.schedule_daily_export()
@@ -333,6 +403,9 @@ class SoundboardWindow(QMainWindow):
         self.ranking_table.setColumnWidth(1, 145)
         self.ranking_table.horizontalHeader().setStretchLastSection(True)
         ranking_layout.addWidget(self.ranking_table)
+        self.tv_button = QPushButton("TOON RANKING OP TV")
+        self.tv_button.clicked.connect(self.open_tv_ranking)
+        ranking_layout.addWidget(self.tv_button)
         content.addWidget(ranking_box, 2)
         self.result_overlay = ResultOverlay(root)
 
@@ -425,6 +498,18 @@ class SoundboardWindow(QMainWindow):
                 item = QTableWidgetItem(value)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter if column != 1 else Qt.AlignmentFlag.AlignVCenter)
                 self.ranking_table.setItem(row, column, item)
+        self.ranking_display.set_scores(scores)
+
+    def open_tv_ranking(self) -> None:
+        """Opent het live Top 10-venster schermvullend op de aangesloten TV."""
+        if self.ranking_display.show_on_tv():
+            self.status_label.setText("LIVE RANKING geopend op het tweede scherm.")
+        else:
+            QMessageBox.information(
+                self,
+                "Geen tweede scherm gevonden",
+                "Sluit eerst een TV of tweede monitor aan. Daarna opent de ranking daar schermvullend.",
+            )
 
     def schedule_daily_export(self) -> None:
         now = datetime.now()
@@ -486,6 +571,7 @@ class SoundboardWindow(QMainWindow):
         self.measurement_timer.stop()
         self.daily_export_timer.stop()
         self.audio.stop()
+        self.ranking_display.close()
         event.accept()
 
     def resizeEvent(self, event) -> None:
