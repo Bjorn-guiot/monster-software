@@ -1,6 +1,7 @@
 
 import json
 import math
+import random
 import re
 import sys
 import threading
@@ -130,6 +131,88 @@ class LogoMeter(QWidget):
         painter.restore()
 
 
+class ResultOverlay(QWidget):
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setVisible(False)
+        self._timer = QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._advance)
+        self._started_at = 0.0
+        self._score = 0.0
+        self._is_champion = False
+        self._particles: list[dict] = []
+        self._logo = QPixmap(str(LOGO_FILE))
+
+    def show_result(self, score: float, is_champion: bool) -> None:
+
+        self.setGeometry(self.parentWidget().rect())
+        self._score = score
+        self._is_champion = is_champion
+        self._started_at = time.monotonic()
+        self._particles = []
+        if is_champion:
+            for cannon_x, direction in ((self.width() * 0.10, 1), (self.width() * 0.90, -1)):
+                for _ in range(48):
+                    self._particles.append({
+                        "x": cannon_x,
+                        "y": self.height() - 34,
+                        "vx": direction * random.uniform(210, 500),
+                        "vy": random.uniform(-700, -350),
+                        "size": random.randint(13, 28),
+                        "rotation": random.randint(0, 359),
+                        "spin": random.uniform(-420, 420),
+                    })
+        self.show()
+        self.raise_()
+        self._timer.start()
+        self.update()
+
+    def _advance(self) -> None:
+
+        elapsed = time.monotonic() - self._started_at
+        if elapsed > 3.0:
+            self._timer.stop()
+            self.hide()
+            return
+        for particle in self._particles:
+            particle["x"] += particle["vx"] * 0.016
+            particle["y"] += particle["vy"] * 0.016
+            particle["vy"] += 850 * 0.016
+            particle["rotation"] += particle["spin"] * 0.016
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 135))
+
+        title = "NIEUWE #1!" if self._is_champion else "TEST KLAAR!"
+        painter.setPen(QColor("#3CD070"))
+        painter.setFont(QFont("Arial", 42, QFont.Weight.Black))
+        painter.drawText(self.rect().adjusted(0, 105, 0, -120), Qt.AlignmentFlag.AlignHCenter, title)
+        painter.setPen(QColor("#FFFFFF"))
+        painter.setFont(QFont("Arial", 24, QFont.Weight.Bold))
+        painter.drawText(self.rect().adjusted(0, 190, 0, -60), Qt.AlignmentFlag.AlignHCenter, f"{self._score:.1f} dB SPL")
+
+        if not self._is_champion:
+            return
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#3CD070"))
+        cannon_y = self.height() - 45
+        painter.drawRoundedRect(28, cannon_y, 70, 24, 8, 8)
+        painter.drawRoundedRect(self.width() - 98, cannon_y, 70, 24, 8, 8)
+        for particle in self._particles:
+            painter.save()
+            painter.translate(particle["x"], particle["y"])
+            painter.rotate(particle["rotation"])
+            size = particle["size"]
+            painter.drawPixmap(QRect(-size // 2, -size // 2, size, size), self._logo)
+            painter.restore()
+
+
 class SoundboardWindow(QMainWindow):
 
     def __init__(self) -> None:
@@ -251,6 +334,7 @@ class SoundboardWindow(QMainWindow):
         self.ranking_table.horizontalHeader().setStretchLastSection(True)
         ranking_layout.addWidget(self.ranking_table)
         content.addWidget(ranking_box, 2)
+        self.result_overlay = ResultOverlay(root)
 
     @staticmethod
     def _make_logo_label(parent: QWidget, size: int) -> QLabel:
@@ -301,6 +385,7 @@ class SoundboardWindow(QMainWindow):
         scores = self.read_scores()
         scores.append(score)
         scores.sort(key=lambda entry: entry.get("max_db", 0), reverse=True)
+        rank = next(index for index, entry in enumerate(scores) if entry is score) + 1
         self.write_scores(scores)
         self.populate_ranking(scores)
         self.status_label.setText(f"TEST KLAAR — jouw piek: {self.max_db:.1f} dB SPL")
@@ -309,6 +394,7 @@ class SoundboardWindow(QMainWindow):
         self.name_input.setEnabled(True)
         self.email_input.setEnabled(True)
         self.validate_form()
+        self.result_overlay.show_result(score["max_db"], rank == 1)
 
     def read_scores(self) -> list[dict]:
         try:
@@ -401,6 +487,12 @@ class SoundboardWindow(QMainWindow):
         self.daily_export_timer.stop()
         self.audio.stop()
         event.accept()
+
+    def resizeEvent(self, event) -> None:
+
+        super().resizeEvent(event)
+        if hasattr(self, "result_overlay"):
+            self.result_overlay.setGeometry(self.centralWidget().rect())
 
 
 def main() -> None:
