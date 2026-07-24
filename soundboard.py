@@ -36,8 +36,9 @@ HIGHSCORES_FILE = APP_DIR / "highscores.json"
 EXPORT_DIR = APP_DIR / "daily_exports"
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 NOISE_FLOOR_DBFS = -90.0
-DISPLAY_MAX_DB = 150.0
-CALIBRATION_OFFSET_DB = 114.0
+DISPLAY_MAX_DB = 132.0
+SHURE_MV7_SAMPLE_RATE = 48_000
+CALIBRATION_OFFSET_DB = 141.0
 
 
 class AudioLevelReader:
@@ -46,6 +47,15 @@ class AudioLevelReader:
         self._lock = threading.Lock()
         self._dbfs = NOISE_FLOOR_DBFS
         self._stream: sd.InputStream | None = None
+        self.device_name = ""
+
+    @staticmethod
+    def _find_mv7_input() -> tuple[int, str]:
+        for index, device in enumerate(sd.query_devices()):
+            name = str(device["name"])
+            if "mv7" in name.lower() and device["max_input_channels"] >= 1:
+                return index, name
+        raise RuntimeError("Shure MV7 niet gevonden. Sluit de microfoon via USB aan en start de app opnieuw.")
 
     def _audio_callback(self, indata, frames, time_info, status) -> None:
         if status:
@@ -56,10 +66,14 @@ class AudioLevelReader:
             self._dbfs = max(NOISE_FLOOR_DBFS, min(0.0, dbfs))
 
     def start(self) -> None:
+        device_index, self.device_name = self._find_mv7_input()
         self._stream = sd.InputStream(
+            device=device_index,
             channels=1,
-            samplerate=None,
+            samplerate=SHURE_MV7_SAMPLE_RATE,
             blocksize=1024,
+            dtype="float32",
+            latency="low",
             callback=self._audio_callback,
         )
         self._stream.start()
@@ -72,7 +86,6 @@ class AudioLevelReader:
 
     def level(self) -> float:
         with self._lock:
-            # dB SPL = digitale dBFS-waarde + de microfoon-/interfacekalibratie.
             return max(0.0, min(DISPLAY_MAX_DB, self._dbfs + CALIBRATION_OFFSET_DB))
 
 
@@ -181,7 +194,7 @@ class SoundboardWindow(QMainWindow):
         self.db_label.setFont(QFont("Arial", 43, QFont.Weight.Bold))
         self.db_label.setStyleSheet("color: #3CD070; margin-top: 10px;")
         left.addWidget(self.db_label)
-        self.status_label = QLabel("Vul je gegevens in om de test te starten.")
+        self.status_label = QLabel("Sluit de Shure MV7 via USB aan en vul je gegevens in.")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet("color: #bdbdbd; font-size: 14px;")
         left.addWidget(self.status_label)
@@ -234,7 +247,7 @@ class SoundboardWindow(QMainWindow):
         self.start_button.setEnabled(False)
         self.name_input.setEnabled(False)
         self.email_input.setEnabled(False)
-        self.status_label.setText("METING ACTIEF — schreeuw zo hard als je kunt! (5.0 s)")
+        self.status_label.setText(f"METING ACTIEF — {self.audio.device_name} — nog 5.0 s")
         self.measurement_timer.start()
 
     def update_measurement(self) -> None:
@@ -257,7 +270,7 @@ class SoundboardWindow(QMainWindow):
         scores.sort(key=lambda entry: entry.get("max_db", 0), reverse=True)
         self.write_scores(scores)
         self.populate_ranking(scores)
-        self.status_label.setText(f"TEST KLAAR — jouw piek: {self.max_db:.1f} dBFS")
+        self.status_label.setText(f"TEST KLAAR — jouw piek: {self.max_db:.1f} dB SPL")
         self.name_input.clear()
         self.email_input.clear()
         self.name_input.setEnabled(True)
