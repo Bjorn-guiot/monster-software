@@ -27,15 +27,23 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 
-APP_DIR = Path(__file__).resolve().parent
-HIGHSCORES_FILE = APP_DIR / "highscores.json"
-EXPORT_DIR = APP_DIR / "daily_exports"
-LOGO_FILE = APP_DIR / "logo-clean.png"
+# In de .exe staan assets tijdelijk uitgepakt, maar gegevens moeten naast de .exe blijven.
+if getattr(sys, "frozen", False):
+    RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+    DATA_DIR = Path(sys.executable).resolve().parent
+else:
+    RESOURCE_DIR = Path(__file__).resolve().parent
+    DATA_DIR = RESOURCE_DIR
+
+HIGHSCORES_FILE = DATA_DIR / "highscores.json"
+EXPORT_DIR = DATA_DIR / "daily_exports"
+LOGO_FILE = RESOURCE_DIR / "logo-clean.png"
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 NOISE_FLOOR_DBFS = -90.0
 DISPLAY_MAX_DB = 132.0
@@ -57,7 +65,7 @@ class AudioLevelReader:
             name = str(device["name"])
             if "mv7" in name.lower() and device["max_input_channels"] >= 1:
                 return index, name
-        raise RuntimeError("Shure MV7 niet gevonden. Sluit de microfoon via USB aan en start de app opnieuw.")
+        raise RuntimeError("Shure MV7 not found. Connect the microphone via USB and restart the app.")
 
     def _audio_callback(self, indata, frames, time_info, status) -> None:
         if status:
@@ -110,7 +118,7 @@ class LogoMeter(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self._logo.isNull():
             painter.setPen(QColor("#3CD070"))
-            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Logo niet gevonden")
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Logo not found")
             return
         available = self.rect().adjusted(12, 6, -12, -6)
         ratio = self._logo.width() / self._logo.height()
@@ -120,7 +128,7 @@ class LogoMeter(QWidget):
         y = available.y() + (available.height() - height) // 2
         target = QRect(x, y, width, height)
 
-        # De donkere vorm toont de volledige meter; het heldere logo groeit omhoog.
+        # The dimmed logo shows the complete meter; the bright logo grows upward.
         painter.setOpacity(0.16)
         painter.drawPixmap(target, self._logo)
         painter.save()
@@ -189,7 +197,7 @@ class ResultOverlay(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), QColor(0, 0, 0, 135))
 
-        title = "NIEUWE #1!" if self._is_champion else "TEST KLAAR!"
+        title = "NEW #1!" if self._is_champion else "TEST COMPLETE!"
         painter.setPen(QColor("#3CD070"))
         painter.setFont(QFont("Arial", 42, QFont.Weight.Black))
         painter.drawText(self.rect().adjusted(0, 105, 0, -120), Qt.AlignmentFlag.AlignHCenter, title)
@@ -227,8 +235,37 @@ class TVRankingWindow(QMainWindow):
         """)
         root = QWidget()
         self.setCentralWidget(root)
+        self.root = root
         layout = QVBoxLayout(root)
         layout.setContentsMargins(50, 38, 50, 48)
+        self.pages = QStackedWidget()
+        layout.addWidget(self.pages)
+
+        self.test_page = QWidget()
+        test_layout = QVBoxLayout(self.test_page)
+        test_layout.setSpacing(18)
+        test_title = QLabel("MONSTER ENERGY SCREAM CHALLENGE")
+        test_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        test_title.setFont(QFont("Arial", 32, QFont.Weight.Black))
+        test_title.setStyleSheet("color: #3CD070;")
+        test_layout.addWidget(test_title)
+        self.test_db_label = QLabel("0.0 dB SPL")
+        self.test_db_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.test_db_label.setFont(QFont("Arial", 54, QFont.Weight.Black))
+        self.test_db_label.setStyleSheet("color: #3CD070;")
+        test_layout.addWidget(self.test_db_label)
+        self.test_status_label = QLabel("GET READY FOR THE SCREAM TEST")
+        self.test_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.test_status_label.setFont(QFont("Arial", 20, QFont.Weight.Bold))
+        test_layout.addWidget(self.test_status_label)
+        self.test_meter = LogoMeter()
+        self.test_meter.setMinimumHeight(420)
+        test_layout.addWidget(self.test_meter, 1)
+        self.pages.addWidget(self.test_page)
+
+        self.leaderboard_page = QWidget()
+        leaderboard_layout = QVBoxLayout(self.leaderboard_page)
+        leaderboard_layout.setSpacing(16)
         title_row = QHBoxLayout()
         title_row.addWidget(self._logo_label(68))
         title = QLabel("MONSTER ENERGY SCREAM CHALLENGE — LIVE TOP 10")
@@ -237,16 +274,21 @@ class TVRankingWindow(QMainWindow):
         title.setStyleSheet("color: #3CD070;")
         title_row.addWidget(title, 1)
         title_row.addWidget(self._logo_label(68))
-        layout.addLayout(title_row)
+        leaderboard_layout.addLayout(title_row)
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["RANK", "NAAM", "MAX SCORE (dB SPL)"])
+        self.table.setHorizontalHeaderLabels(["RANK", "NAME", "MAX SCORE (dB SPL)"])
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table.verticalHeader().setVisible(False)
         self.table.setColumnWidth(0, 140)
         self.table.setColumnWidth(1, 360)
         self.table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.table, 1)
+        leaderboard_layout.addWidget(self.table, 1)
+        self.pages.addWidget(self.leaderboard_page)
+        self.result_overlay = ResultOverlay(root)
+        self.leaderboard_timer = QTimer(self)
+        self.leaderboard_timer.setSingleShot(True)
+        self.leaderboard_timer.timeout.connect(self.show_leaderboard)
 
     @staticmethod
     def _logo_label(size: int) -> QLabel:
@@ -261,8 +303,8 @@ class TVRankingWindow(QMainWindow):
         top_ten = scores[:10]
         self.table.setRowCount(len(top_ten))
         for row, score in enumerate(top_ten):
-            full_name = str(score.get("name", "Onbekend")).strip()
-            first_name = full_name.split()[0] if full_name else "Onbekend"
+            full_name = str(score.get("name", "Unknown")).strip()
+            first_name = full_name.split()[0] if full_name else "Unknown"
             values = [str(row + 1), first_name, f"{float(score.get('max_db', 0)):.1f}"]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
@@ -279,7 +321,36 @@ class TVRankingWindow(QMainWindow):
         target_screen = screens[1]
         self.setGeometry(target_screen.geometry())
         self.showFullScreen()
+        self.show_test(0.0, "GET READY FOR THE SCREAM TEST")
         return True
+
+    def show_test(self, decibels: float, status: str) -> None:
+        """Displays the live scream test first on the external TV."""
+        self.pages.setCurrentWidget(self.test_page)
+        self.test_db_label.setText(f"{decibels:.1f} dB SPL")
+        self.test_status_label.setText(status)
+        self.test_meter.set_level(decibels)
+
+    def update_test(self, decibels: float, remaining: float) -> None:
+        """Updates the large TV test display while the participant is screaming."""
+        if self.isVisible():
+            self.show_test(decibels, f"SCREAM NOW — {remaining:.1f} SECONDS LEFT")
+
+    def show_leaderboard(self) -> None:
+        """Switches the TV from the completed test to the updated leaderboard."""
+        self.pages.setCurrentWidget(self.leaderboard_page)
+
+    def show_result(self, score: float, is_champion: bool) -> None:
+        """Shows the completed test and champion confetti on the external TV."""
+        if self.isVisible():
+            self.result_overlay.show_result(score, is_champion)
+            self.leaderboard_timer.start(3000)
+
+    def resizeEvent(self, event) -> None:
+        """Keeps the result animation full-screen when the TV resolution changes."""
+        super().resizeEvent(event)
+        if hasattr(self, "result_overlay"):
+            self.result_overlay.setGeometry(self.centralWidget().rect())
 
 
 class SoundboardWindow(QMainWindow):
@@ -356,13 +427,13 @@ class SoundboardWindow(QMainWindow):
         form.setContentsMargins(18, 16, 18, 16)
         form.setSpacing(12)
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("Voor- en achternaam")
+        self.name_input.setPlaceholderText("First and last name")
         self.email_input = QLineEdit()
-        self.email_input.setPlaceholderText("naam@voorbeeld.nl")
+        self.email_input.setPlaceholderText("name@example.com")
         self.name_input.textChanged.connect(self.validate_form)
         self.email_input.textChanged.connect(self.validate_form)
-        form.addRow("Volledige naam", self.name_input)
-        form.addRow("E-mailadres", self.email_input)
+        form.addRow("Full name", self.name_input)
+        form.addRow("Email address", self.email_input)
         left.addWidget(registration)
 
         self.db_label = QLabel("0.0 dB")
@@ -370,17 +441,17 @@ class SoundboardWindow(QMainWindow):
         self.db_label.setFont(QFont("Arial", 43, QFont.Weight.Bold))
         self.db_label.setStyleSheet("color: #3CD070; margin-top: 10px;")
         left.addWidget(self.db_label)
-        self.status_label = QLabel("Sluit de Shure MV7 via USB aan en vul je gegevens in.")
+        self.status_label = QLabel("Connect the Shure MV7 via USB, then enter your details.")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet("color: #bdbdbd; font-size: 14px;")
         left.addWidget(self.status_label)
-        export_note = QLabel("Dagelijkse Top 10-export: daily_exports")
+        export_note = QLabel("Daily Top 10 export: daily_exports")
         export_note.setAlignment(Qt.AlignmentFlag.AlignCenter)
         export_note.setStyleSheet("color: #777; font-size: 11px;")
         left.addWidget(export_note)
         self.meter = LogoMeter()
         left.addWidget(self.meter)
-        self.start_button = QPushButton("START SCHREEUW TEST")
+        self.start_button = QPushButton("START SCREAM TEST")
         self.start_button.setMinimumHeight(54)
         self.start_button.setEnabled(False)
         self.start_button.clicked.connect(self.start_test)
@@ -390,12 +461,12 @@ class SoundboardWindow(QMainWindow):
         ranking_box = QFrame()
         ranking_box.setStyleSheet("QFrame { background: #181818; border: 1px solid #303030; border-radius: 8px; }")
         ranking_layout = QVBoxLayout(ranking_box)
-        ranking_title = QLabel("TOP 10 RANKINGBOARD")
+        ranking_title = QLabel("TOP 10 LEADERBOARD")
         ranking_title.setFont(QFont("Arial", 15, QFont.Weight.Bold))
         ranking_title.setStyleSheet("color: #3CD070; border: none;")
         ranking_layout.addWidget(ranking_title)
         self.ranking_table = QTableWidget(0, 3)
-        self.ranking_table.setHorizontalHeaderLabels(["Rank", "Naam", "Max Score (dB)"])
+        self.ranking_table.setHorizontalHeaderLabels(["Rank", "Name", "Max Score (dB SPL)"])
         self.ranking_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.ranking_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.ranking_table.verticalHeader().setVisible(False)
@@ -403,7 +474,7 @@ class SoundboardWindow(QMainWindow):
         self.ranking_table.setColumnWidth(1, 145)
         self.ranking_table.horizontalHeader().setStretchLastSection(True)
         ranking_layout.addWidget(self.ranking_table)
-        self.tv_button = QPushButton("TOON RANKING OP TV")
+        self.tv_button = QPushButton("OPEN TV DISPLAY")
         self.tv_button.clicked.connect(self.open_tv_ranking)
         ranking_layout.addWidget(self.tv_button)
         content.addWidget(ranking_box, 2)
@@ -411,7 +482,7 @@ class SoundboardWindow(QMainWindow):
 
     @staticmethod
     def _make_logo_label(parent: QWidget, size: int) -> QLabel:
-        """Maakt een transparant, schaalbaar label voor het aangeleverde Monster-logo."""
+        """Creates a transparent, scalable label for the supplied Monster logo."""
         logo = QLabel(parent)
         logo.setPixmap(QPixmap(str(LOGO_FILE)))
         logo.setFixedSize(size, size)
@@ -429,15 +500,17 @@ class SoundboardWindow(QMainWindow):
         try:
             self.audio.start()
         except Exception as error:
-            QMessageBox.critical(self, "Microfoon niet beschikbaar", f"De microfoon kon niet worden geopend.\n\n{error}")
+            QMessageBox.critical(self, "Microphone unavailable", f"The microphone could not be opened.\n\n{error}")
             return
+        self.ranking_display.show_on_tv()
+        self.ranking_display.show_test(0.0, "SCREAM NOW — 5.0 SECONDS LEFT")
         self.is_measuring = True
         self.max_db = 0.0
         self.started_at = time.monotonic()
         self.start_button.setEnabled(False)
         self.name_input.setEnabled(False)
         self.email_input.setEnabled(False)
-        self.status_label.setText(f"METING ACTIEF — {self.audio.device_name} — nog 5.0 s")
+        self.status_label.setText(f"TEST ACTIVE — {self.audio.device_name} — 5.0 seconds left")
         self.measurement_timer.start()
 
     def update_measurement(self) -> None:
@@ -446,7 +519,8 @@ class SoundboardWindow(QMainWindow):
         self.db_label.setText(f"{current_db:.1f} dB")
         self.meter.set_level(current_db)
         remaining = max(0.0, 5.0 - (time.monotonic() - self.started_at))
-        self.status_label.setText(f"METING ACTIEF — nog {remaining:.1f} s")
+        self.status_label.setText(f"TEST ACTIVE — {remaining:.1f} seconds left")
+        self.ranking_display.update_test(current_db, remaining)
         if remaining <= 0:
             self.finish_test()
 
@@ -461,13 +535,14 @@ class SoundboardWindow(QMainWindow):
         rank = next(index for index, entry in enumerate(scores) if entry is score) + 1
         self.write_scores(scores)
         self.populate_ranking(scores)
-        self.status_label.setText(f"TEST KLAAR — jouw piek: {self.max_db:.1f} dB SPL")
+        self.status_label.setText(f"TEST COMPLETE — your peak: {self.max_db:.1f} dB SPL")
         self.name_input.clear()
         self.email_input.clear()
         self.name_input.setEnabled(True)
         self.email_input.setEnabled(True)
         self.validate_form()
         self.result_overlay.show_result(score["max_db"], rank == 1)
+        self.ranking_display.show_result(score["max_db"], rank == 1)
 
     def read_scores(self) -> list[dict]:
         try:
@@ -490,9 +565,9 @@ class SoundboardWindow(QMainWindow):
         top_ten = scores[:10]
         self.ranking_table.setRowCount(len(top_ten))
         for row, score in enumerate(top_ten):
-            # De volledige naam blijft privé in het JSON-bestand; toon alleen de voornaam.
-            full_name = str(score.get("name", "Onbekend")).strip()
-            first_name = full_name.split()[0] if full_name else "Onbekend"
+            # Keep the full name private in JSON; show only the first name publicly.
+            full_name = str(score.get("name", "Unknown")).strip()
+            first_name = full_name.split()[0] if full_name else "Unknown"
             values = [str(row + 1), first_name, f"{float(score.get('max_db', 0)):.1f}"]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
@@ -501,14 +576,14 @@ class SoundboardWindow(QMainWindow):
         self.ranking_display.set_scores(scores)
 
     def open_tv_ranking(self) -> None:
-        """Opent het live Top 10-venster schermvullend op de aangesloten TV."""
+        """Opens the live display full-screen on the connected TV."""
         if self.ranking_display.show_on_tv():
-            self.status_label.setText("LIVE RANKING geopend op het tweede scherm.")
+            self.status_label.setText("TV display opened on the second screen.")
         else:
             QMessageBox.information(
                 self,
-                "Geen tweede scherm gevonden",
-                "Sluit eerst een TV of tweede monitor aan. Daarna opent de ranking daar schermvullend.",
+                "No second screen found",
+                "Connect a TV or second monitor first. The live display will then open there full-screen.",
             )
 
     def schedule_daily_export(self) -> None:
@@ -521,9 +596,9 @@ class SoundboardWindow(QMainWindow):
         export_date = date.today() - timedelta(days=1)
         try:
             self.export_top_ten_to_excel(export_date)
-            self.status_label.setText(f"Dagelijkse Top 10 geëxporteerd: {export_date.isoformat()}")
+            self.status_label.setText(f"Daily Top 10 exported: {export_date.isoformat()}")
         except (OSError, RuntimeError) as error:
-            self.status_label.setText(f"Dagelijkse export mislukt: {error}")
+            self.status_label.setText(f"Daily export failed: {error}")
         finally:
             self.schedule_daily_export()
 
@@ -532,7 +607,7 @@ class SoundboardWindow(QMainWindow):
             from openpyxl import Workbook
             from openpyxl.styles import Alignment, Font, PatternFill
         except ModuleNotFoundError as error:
-            raise RuntimeError("Installeer openpyxl met: py -m pip install openpyxl") from error
+            raise RuntimeError("Install openpyxl with: py -m pip install openpyxl") from error
         scores = self.read_scores()
         scores.sort(key=lambda entry: entry.get("max_db", 0), reverse=True)
         workbook = Workbook()
@@ -543,18 +618,18 @@ class SoundboardWindow(QMainWindow):
         sheet["A1"].font = Font(bold=True, size=16, color="3CD070")
         sheet["A1"].fill = PatternFill("solid", fgColor="111111")
         sheet["A1"].alignment = Alignment(horizontal="center")
-        sheet.append([f"Dagelijkse Top 10 — {export_date.isoformat()}"])
+        sheet.append([f"Daily Top 10 — {export_date.isoformat()}"])
         sheet.merge_cells("A2:C2")
         sheet["A2"].alignment = Alignment(horizontal="center")
         sheet.append([])
-        sheet.append(["Rank", "Naam", "Max Score (dB)"])
+        sheet.append(["Rank", "Name", "Max Score (dB SPL)"])
         for cell in sheet[4]:
             cell.font = Font(bold=True, color="FFFFFF")
             cell.fill = PatternFill("solid", fgColor="267A45")
             cell.alignment = Alignment(horizontal="center")
         for rank, score in enumerate(scores[:10], start=1):
-            full_name = str(score.get("name", "Onbekend")).strip()
-            first_name = full_name.split()[0] if full_name else "Onbekend"
+            full_name = str(score.get("name", "Unknown")).strip()
+            first_name = full_name.split()[0] if full_name else "Unknown"
             sheet.append([rank, first_name, round(float(score.get("max_db", 0)), 1)])
         sheet.column_dimensions["A"].width = 12
         sheet.column_dimensions["B"].width = 24
