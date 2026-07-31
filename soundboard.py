@@ -163,13 +163,13 @@ class ResultOverlay(QWidget):
         self._particles = []
         if is_champion:
             for cannon_x, direction in ((self.width() * 0.10, 1), (self.width() * 0.90, -1)):
-                for _ in range(48):
+                for _ in range(70):
                     self._particles.append({
                         "x": cannon_x,
-                        "y": self.height() - 34,
-                        "vx": direction * random.uniform(210, 500),
-                        "vy": random.uniform(-700, -350),
-                        "size": random.randint(13, 28),
+                        "y": self.height() - 95,
+                        "vx": direction * random.uniform(260, 680),
+                        "vy": random.uniform(-900, -390),
+                        "size": random.randint(24, 52),
                         "rotation": random.randint(0, 359),
                         "spin": random.uniform(-420, 420),
                     })
@@ -192,6 +192,32 @@ class ResultOverlay(QWidget):
             particle["rotation"] += particle["spin"] * 0.016
         self.update()
 
+    @staticmethod
+    def _draw_cannon(painter: QPainter, x: float, y: float, direction: int) -> None:
+        """Draws a highly visible Monster-style confetti cannon pointing at the centre."""
+        painter.save()
+        painter.translate(x, y)
+        painter.setPen(QPen(QColor("#050505"), 5))
+        painter.setBrush(QColor("#202020"))
+        painter.drawEllipse(-43, -10, 86, 31)
+        painter.setBrush(QColor("#3CD070"))
+        painter.drawEllipse(-25, -20, 50, 20)
+
+        painter.scale(direction, 1)
+        painter.rotate(-31)
+        painter.setBrush(QColor("#153B25"))
+        painter.drawRoundedRect(0, -20, 132, 40, 12, 12)
+        painter.setBrush(QColor("#3CD070"))
+        painter.drawRoundedRect(8, -13, 112, 26, 9, 9)
+        painter.setBrush(QColor("#08140D"))
+        painter.drawEllipse(109, -25, 39, 50)
+        painter.setBrush(QColor("#E6FF00"))
+        painter.drawEllipse(121, -14, 27, 28)
+        painter.setPen(QPen(QColor("#E6FF00"), 4))
+        for offset in (-20, 0, 20):
+            painter.drawLine(148, 0, 170, offset)
+        painter.restore()
+
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -207,11 +233,8 @@ class ResultOverlay(QWidget):
 
         if not self._is_champion:
             return
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#3CD070"))
-        cannon_y = self.height() - 45
-        painter.drawRoundedRect(28, cannon_y, 70, 24, 8, 8)
-        painter.drawRoundedRect(self.width() - 98, cannon_y, 70, 24, 8, 8)
+        self._draw_cannon(painter, 85, self.height() - 62, 1)
+        self._draw_cannon(painter, self.width() - 85, self.height() - 62, -1)
         for particle in self._particles:
             painter.save()
             painter.translate(particle["x"], particle["y"])
