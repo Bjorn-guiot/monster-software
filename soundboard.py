@@ -1,12 +1,15 @@
 
 import json
 import math
+import os
 import random
 import re
+import smtplib
 import sys
 import threading
 import time
 from datetime import date, datetime, time as clock_time, timedelta
+from email.message import EmailMessage
 from pathlib import Path
 
 import numpy as np
@@ -48,6 +51,17 @@ EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 NOISE_FLOOR_DBFS = -90.0
 DISPLAY_MAX_DB = 132.0
 SHURE_MV7_SAMPLE_RATE = 48_000
+# Festival mode: require the Shure MV7 USB microphone.
+REQUIRE_SHURE_MV7 = True
+# Festival mode: export the finished daily leaderboard at local midnight.
+DAILY_EXPORT_TIME = clock_time.min
+TEST_EXPORT_SCHEDULE = False
+# Configured recipient for the daily Excel export. SMTP credentials are still required to send email.
+EXPORT_RECIPIENT_EMAIL = "bjornguiot@gmail.com"
+SMTP_SENDER_EMAIL = "screamchallenge@gmail.com"
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 465
+SMTP_APP_PASSWORD_ENV = "MONSTER_SMTP_APP_PASSWORD"
 CALIBRATION_OFFSET_DB = 141.0
 
 
@@ -60,12 +74,15 @@ class AudioLevelReader:
         self.device_name = ""
 
     @staticmethod
-    def _find_mv7_input() -> tuple[int, str]:
+    def _find_mv7_input() -> tuple[int | None, str]:
         for index, device in enumerate(sd.query_devices()):
             name = str(device["name"])
             if "mv7" in name.lower() and device["max_input_channels"] >= 1:
                 return index, name
-        raise RuntimeError("Shure MV7 not found. Connect the microphone via USB and restart the app.")
+        if REQUIRE_SHURE_MV7:
+            raise RuntimeError("Shure MV7 not found. Connect the microphone via USB and restart the app.")
+        default_input = sd.query_devices(kind="input")
+        return None, f"Default microphone: {default_input['name']}"
 
     def _audio_callback(self, indata, frames, time_info, status) -> None:
         if status:
@@ -77,10 +94,11 @@ class AudioLevelReader:
 
     def start(self) -> None:
         device_index, self.device_name = self._find_mv7_input()
+        sample_rate = SHURE_MV7_SAMPLE_RATE if device_index is not None else None
         self._stream = sd.InputStream(
             device=device_index,
             channels=1,
-            samplerate=SHURE_MV7_SAMPLE_RATE,
+            samplerate=sample_rate,
             blocksize=1024,
             dtype="float32",
             latency="low",
@@ -611,19 +629,48 @@ class SoundboardWindow(QMainWindow):
 
     def schedule_daily_export(self) -> None:
         now = datetime.now()
-        next_midnight = datetime.combine(now.date() + timedelta(days=1), clock_time.min)
-        milliseconds = max(1, int((next_midnight - now).total_seconds() * 1000))
+        next_export = datetime.combine(now.date(), DAILY_EXPORT_TIME)
+        if next_export <= now:
+            next_export += timedelta(days=1)
+        milliseconds = max(1, int((next_export - now).total_seconds() * 1000))
         self.daily_export_timer.start(milliseconds)
 
     def export_at_end_of_day(self) -> None:
-        export_date = date.today() - timedelta(days=1)
+        export_date = date.today() if TEST_EXPORT_SCHEDULE else date.today() - timedelta(days=1)
         try:
-            self.export_top_ten_to_excel(export_date)
-            self.status_label.setText(f"Daily Top 10 exported: {export_date.isoformat()}")
+            output_file = self.export_top_ten_to_excel(export_date)
+            self.send_export_email(output_file, export_date)
+            self.status_label.setText(
+                f"Daily Top 10 saved and emailed: {export_date.isoformat()}"
+            )
         except (OSError, RuntimeError) as error:
             self.status_label.setText(f"Daily export failed: {error}")
         finally:
             self.schedule_daily_export()
+
+    @staticmethod
+    def send_export_email(output_file: Path, export_date: date) -> None:
+        """Sends the finished daily Excel file through Gmail SMTP over encrypted SSL."""
+        app_password = os.environ.get(SMTP_APP_PASSWORD_ENV, "").replace(" ", "")
+        if not app_password:
+            raise RuntimeError(
+                f"Excel saved locally, but email was not sent. Set the {SMTP_APP_PASSWORD_ENV} environment variable."
+            )
+        message = EmailMessage()
+        message["Subject"] = f"Monster Energy Scream Challenge — Top 10 — {export_date.isoformat()}"
+        message["From"] = SMTP_SENDER_EMAIL
+        message["To"] = EXPORT_RECIPIENT_EMAIL
+        message.set_content("Attached is the daily Monster Energy Scream Challenge Top 10 export.")
+        with output_file.open("rb") as attachment:
+            message.add_attachment(
+                attachment.read(),
+                maintype="application",
+                subtype="vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                filename=output_file.name,
+            )
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=30) as server:
+            server.login(SMTP_SENDER_EMAIL, app_password)
+            server.send_message(message)
 
     def export_top_ten_to_excel(self, export_date: date) -> Path:
         try:
