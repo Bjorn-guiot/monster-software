@@ -36,7 +36,7 @@ On Windows, run:
 
 ## Gmail delivery setup
 
-The daily Excel export is sent from `screamchallenge@gmail.com` to `bjornguiot@gmail.com`. Create a Gmail app password, then run this once in PowerShell on the festival PC, replacing the placeholder with the app password:
+The daily Excel export is sent from `screamchallenge@gmail.com` to `dries.vanheesvelde@monsterenergy.com`. Create a Gmail app password, then run this once in PowerShell on the festival PC, replacing the placeholder with the app password:
 
 ```powershell
 [Environment]::SetEnvironmentVariable("MONSTER_SMTP_APP_PASSWORD", "PASTE_YOUR_GMAIL_APP_PASSWORD_HERE", "User")

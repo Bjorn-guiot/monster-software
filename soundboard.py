@@ -57,7 +57,7 @@ REQUIRE_SHURE_MV7 = True
 DAILY_EXPORT_TIME = clock_time.min
 TEST_EXPORT_SCHEDULE = False
 # Configured recipient for the daily Excel export. SMTP credentials are still required to send email.
-EXPORT_RECIPIENT_EMAIL = "bjornguiot@gmail.com"
+EXPORT_RECIPIENT_EMAIL = "dries.vanheesvelde@monsterenergy.com"
 SMTP_SENDER_EMAIL = "screamchallenge@gmail.com"
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
